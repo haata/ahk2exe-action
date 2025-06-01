@@ -49,7 +49,7 @@ function Get-GitHubReleaseAssets {
 
     $downloadFolderName = $displayPath.Split([IO.Path]::GetInvalidFileNameChars()) -join '_'
     $downloadFolder = Join-Path $PathDownloads $downloadFolderName
-    if (Test-Path -Path $downloadFolder) { 
+    if (Test-Path -Path $downloadFolder) {
         if ((Get-ChildItem -Path "$downloadFolder" | Measure-Object).Count -gt 0) {
             Show-Message "$displayPath is already present, skipping re-download..." $StyleQuiet
 
@@ -67,7 +67,7 @@ function Get-GitHubReleaseAssets {
     Show-Message "Getting release information..." $StyleAction
     $headers = @{ "User-Agent" = "PowerShell-ahk2exe-action" }
     if (![string]::IsNullOrEmpty($env:GitHubToken)) { $headers["Authorization"] = "token $env:GitHubToken" }
-    
+
     $release = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers
 
     $assets = $release.assets
@@ -115,24 +115,24 @@ function Invoke-UnzipAllInPlace {
 
 function Install-AutoHotkey {
     $previousHeader = Set-MessageHeader "Install-Autohotkey"
-    
+
     Show-Message "Installing..." $StyleAction
     $downloadFolder = Get-GitHubReleaseAssets -Repository "$env:AutoHotkeyRepo" -ReleaseTag "$env:AutoHotkeyTag" -FileTypeFilter "*.zip"
 
     switch ($env:Target) {
-        'x64' { 
-            $exeName = 'AutoHotkey64.exe' 
+        'x64' {
+            $exeName = 'AutoHotkey64.exe'
             $searchFilter = 'AutoHotkey(U)?64\.exe'
         }
-        'x86' { 
-            $exeName = 'AutoHotkey32.exe' 
+        'x86' {
+            $exeName = 'AutoHotkey32.exe'
             $searchFilter = 'AutoHotkey(U)?32\.exe'
         }
         Default { Throw "Unsupported Architecture: '$target'. Valid Options: x64, x86" }
     }
 
     $installPath = (Get-ChildItem -Path $downloadFolder -Recurse | Where-Object { $_.Name -match "^$searchFilter$" } | Select-Object -First 1)
-    if ([System.IO.File]::Exists($installPath)) { 
+    if ([System.IO.File]::Exists($installPath)) {
         Show-Message "Autohotkey is already installed, skipping re-installation..." $StyleQuiet
 
         [void](Set-MessageHeader $previousHeader)
@@ -160,7 +160,7 @@ function Install-Ahk2Exe {
     $exeName = 'Ahk2Exe.exe'
 
     $installPath = (Get-ChildItem -Path $downloadFolder -Recurse -Filter $exeName | Select-Object -First 1)
-    if ([System.IO.File]::Exists($installPath)) { 
+    if ([System.IO.File]::Exists($installPath)) {
         Show-Message "Ahk2Exe is already installed, skipping re-installation..." $StyleQuiet
 
         [void](Set-MessageHeader $previousHeader)
@@ -190,7 +190,7 @@ function Install-UPX {
     $downloadFolder = Get-GitHubReleaseAssets -Repository "$env:UPXRepo" -ReleaseTag "$env:UPXTag" -FileTypeFilter "*win64.zip"
 
     $exeName = 'upx.exe'
-    $ahk2exeFolder = Split-Path -Path $Ahk2ExePath -Parent 
+    $ahk2exeFolder = Split-Path -Path $Ahk2ExePath -Parent
 
     $installPath = Join-Path $ahk2exeFolder $exeName
     if ([System.IO.File]::Exists($installPath)) {
@@ -239,13 +239,13 @@ function Invoke-Ahk2Exe {
 
     Switch ($compression) {
         'none' { $ahk2exe_args += " /compress 0" }
-        'upx'  { $ahk2exe_args += " /compress 2" } 
+        'upx'  { $ahk2exe_args += " /compress 2" }
         Default { Throw "Unsupported Compression Type: '$compression'. Valid Options: none, upx"}
     }
 
-    if (![string]::IsNullOrEmpty($Out)) { 
+    if (![string]::IsNullOrEmpty($Out)) {
         [void](New-Item -Path $Out -ItemType File -Force)
-        $ahk2exe_args += " /out `"$Out`"" 
+        $ahk2exe_args += " /out `"$Out`""
     }
     $ahk2exe_args += if (![string]::IsNullOrEmpty($Icon)) { " /icon `"$Icon`"" }
     $ahk2exe_args += if (![string]::IsNullOrEmpty($ResourceId)) { " /resourceid `"$ResourceId`"" }
@@ -267,8 +267,8 @@ function Invoke-Ahk2Exe {
 function Invoke-Action {
     Show-Message "Starting..." $StyleAction
 
-    if ([string]::IsNullOrEmpty($env:GitHubToken)) { 
-        Show-Message "GitHubToken environment variable is not set. API calls may be rate limited." $StyleAlert 
+    if ([string]::IsNullOrEmpty($env:GitHubToken)) {
+        Show-Message "GitHubToken environment variable is not set. API calls may be rate limited." $StyleAlert
     }
 
     $ahkPath = Install-AutoHotkey
