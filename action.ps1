@@ -157,6 +157,26 @@ function Install-Ahk2Exe {
     Show-Message "Installing..." $StyleAction
     $downloadFolder = Get-GitHubReleaseAssets -Repository "$env:Ahk2ExeRepo" -ReleaseTag "$env:Ahk2ExeTag" -FileTypeFilter "*.zip"
 
+    # Install BinMod.exe first
+    $exeName = 'BinMod.exe'
+
+    $installPath = (Get-ChildItem -Path $downloadFolder -Recurse -Filter $exeName | Select-Object -First 1)
+    if ([System.IO.File]::Exists($installPath)) {
+        Show-Message "BinMod is already installed, skipping re-installation..." $StyleQuiet
+
+        [void](Set-MessageHeader $previousHeader)
+        return $installPath
+    }
+
+    Invoke-UnzipAllInPlace -FolderPath $downloadFolder
+
+    Show-Message "Verifying installation..." $StyleAction
+    $installPath = (Get-ChildItem -Path $downloadFolder -Recurse -Filter $exeName | Select-Object -First 1)
+    if (![System.IO.File]::Exists($installPath)) { Throw "Missing BinMod Executable '$exeName'." }
+    Show-Message "Installation path: $installPath" $StyleCommand
+    Show-Message "Installation completed" $StyleStatus
+
+    # Install Ahk2Exe.exe
     $exeName = 'Ahk2Exe.exe'
 
     $installPath = (Get-ChildItem -Path $downloadFolder -Recurse -Filter $exeName | Select-Object -First 1)
