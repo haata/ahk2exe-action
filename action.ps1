@@ -33,6 +33,35 @@ function Show-Message {
     Write-Host "$message_style$message$($PSStyle.Reset)"
 }
 
+function Get-GitHubReleaseInformation {
+    param (
+        [string]$Repository,
+        [string]$ReleaseTag = 'latest'
+    )
+
+    $repositoryOwner, $repositoryName = ($Repository -split "/")[0, 1]
+    if ([string]::IsNullOrEmpty($repositoryOwner)) { Throw "Invalid repository path, missing repository owner."}
+    if ([string]::IsNullOrEmpty($repositoryName)) { Throw "Invalid repository path, missing repository name."}
+
+    $displayPath = "$repositoryOwner/$repositoryName/$ReleaseTag"
+    $previousHeader = Set-MessageHeader "Query-$displayPath"
+
+    if ($ReleaseTag -like 'latest') {
+        $apiUrl = "https://api.github.com/repos/$repositoryOwner/$repositoryName/releases/latest"
+    } else {
+        $apiUrl = "https://api.github.com/repos/$repositoryOwner/$repositoryName/releases/tags/$ReleaseTag"
+    }
+
+    Show-Message "Getting release information..." $StyleAction
+    $headers = @{ "User-Agent" = "PowerShell-ahk2exe-action" }
+    if (![string]::IsNullOrEmpty($env:GitHubToken)) { $headers["Authorization"] = "token $env:GitHubToken" }
+
+    $release = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers
+
+    [void](Set-MessageHeader $previousHeader)
+    return $release
+}
+
 function Get-GitHubReleaseAssets {
     param (
         [string]$Repository,
@@ -58,18 +87,9 @@ function Get-GitHubReleaseAssets {
         }
     }
 
-    if ($ReleaseTag -like 'latest') {
-        $apiUrl = "https://api.github.com/repos/$repositoryOwner/$repositoryName/releases/latest"
-    } else {
-        $apiUrl = "https://api.github.com/repos/$repositoryOwner/$repositoryName/releases/tags/$ReleaseTag"
-    }
 
-    Show-Message "Getting release information..." $StyleAction
-    $headers = @{ "User-Agent" = "PowerShell-ahk2exe-action" }
-    if (![string]::IsNullOrEmpty($env:GitHubToken)) { $headers["Authorization"] = "token $env:GitHubToken" }
-
-    $release = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers $headers
-
+    $release = Get-GitHubReleaseInformation -Repository $Repository -ReleaseTag $ReleaseTag
+    
     $assets = $release.assets
     if ($assets.Count -eq 0) { Throw "No assets found for release '$displayPath'" }
 
@@ -102,52 +122,43 @@ function Get-GitHubReleaseAssets {
 function Get-GitHubReleaseFile {
     param(
         [string]$Repository,
-        [string]$ReleaseTag,
-        [string]$InFile,
-        [string]$OutFile
+        [string]$ReleaseTag = 'latest',
+        [string]$FileName
     )
 
     $repositoryOwner, $repositoryName = ($Repository -split "/")[0, 1]
     if ([string]::IsNullOrEmpty($repositoryOwner)) { Throw "Invalid repository path, missing repository owner."}
     if ([string]::IsNullOrEmpty($repositoryName)) { Throw "Invalid repository path, missing repository name."}
 
-    $headers = @{ "User-Agent" = "PowerShell-ahk2exe-action" }
-    if (![string]::IsNullOrEmpty($env:GitHubToken)) { $headers["Authorization"] = "token $env:GitHubToken" }
+    $displayPath = "$repositoryOwner/$repositoryName/$ReleaseTag/$FileName"
+    $previousHeader = Set-MessageHeader "Download-$displayPath"
 
-    if ($ReleaseTag -like 'latest') {
-        # Need to determine what 'latest' is
-        $releaseApiUrl = "https://api.github.com/repos/$repositoryOwner/$repositoryName/releases/latest"
-        try {
-            Show-Message "Retrieving latest tag for $repositoryOwner/$repositoryName $releaseApiUrl"
-            $latestRelease = Invoke-RestMethod -Method Get -Uri $releaseApiUrl -Headers $headers
-            $ReleaseTag = $latestRelease.tag_name
-            Show-Message "latest tag for $repositoryOwner/$repositoryName is $ReleaseTag"
-        } catch
-        {
-            Show-Message "Error retrieving latest release: $($_.Exception.Message)"
+    $downloadFolderName = $displayPath.Split([IO.Path]::GetInvalidFileNameChars()) -join '_'
+    $downloadFolder = Join-Path $PathDownloads $downloadFolderName
+    $downloadDestination = Join-Path $downloadFolder $FileName
+    if (Test-Path -Path $downloadFolder) {
+        if ((Get-ChildItem -Path "$downloadFolder" | Measure-Object).Count -gt 0) {
+            Show-Message "$displayPath is already present, skipping re-download..." $StyleQuiet
+
+            [void](Set-MessageHeader $previousHeader)
+            return $downloadDestination
         }
     }
 
-    $Url = " https://raw.githubusercontent.com/$repositoryOwner/$repositoryName/refs/tags/$ReleaseTag/$InFile"
-    Show-Message "Downloading $Url -> $OutFile"
+    $release = Get-GitHubReleaseInformation -Repository $Repository -ReleaseTag $ReleaseTag
+    $tag = $release.tag_name
 
-    try {
-        if (-not ([string]::IsNullOrWhiteSpace($OutFile))) {
-            # Save content to a file
-            Invoke-WebRequest -Uri $Url -OutFile $OutFile -ErrorAction Stop -Headers $headers
-            Show-Message "Content successfully downloaded to: $OutFile"
-        } else {
-            # Output error content
-            $response = Invoke-WebRequest -Uri $Url -ErrorAction Stop -Headers $headers
-            Show-Message "Content of the URL:"
-            $response.Content
-        }
-    }
-    catch {
-        Show-Message "An error occurred while retrieving the file content ($url -> $OutFile): $($_.Exception.Message)"
-    }
+    $downloadUrl = " https://raw.githubusercontent.com/$repositoryOwner/$repositoryName/refs/tags/$tag/$FileName"
 
-    return $OutFile
+    $previousHeaderAsset = Set-MessageHeader "File-$FileName"
+    Show-Message "Downloading..." $StyleAction
+    Show-Message "Source: $downloadUrl" $StyleCommand
+    Show-Message "Destination: $downloadDestination" $StyleCommand
+    [void](New-Item -ItemType Directory -Path $downloadFolder -Force)
+    [void](New-Object System.Net.WebClient).DownloadFile($downloadUrl, $downloadDestination)
+    Show-Message "Download completed" $StyleStatus
+
+    return $downloadDestination
 }
 
 function Invoke-UnzipAllInPlace {
@@ -237,17 +248,22 @@ function Install-BinMod {
     $previousHeader = Set-MessageHeader "Install-BinMod"
 
     Show-Message "Installing..." $StyleAction
-    # Determine exe destination
+    $downloadFile = Get-GitHubReleaseFile -Repository "$env:Ahk2ExeRepo" -ReleaseTag "$env:Ahk2ExeTag" -FileName "BinMod.ahk"
+
     $exeName = 'BinMod.exe'
     $ahk2exeFolder = Split-Path -Path $Ahk2ExePath -Parent
     $installPath = Join-Path $ahk2exeFolder $exeName
+    if ([System.IO.File]::Exists($installPath)) {
+        Show-Message "BinMod is already installed, skipping re-installation..." $StyleQuiet
 
-    # Download file
-    $downloadFile = Get-GitHubReleaseFile -Repository "$env:Ahk2ExeRepo" -ReleaseTag "$env:Ahk2ExeTag" -InFile "BinMod.ahk" -OutFile "$Ahk2ExeFolder\BinMod.ahk"
+        [void](Set-MessageHeader $previousHeader)
+        return
+    }
 
-    # Build BinMod.exe
     Invoke-Ahk2Exe -Path "$ahk2exePath" -Base "$ahk2exePath" -In "$downloadFile" -Out "$installPath" -Icon "" -Compression "none" -ResourceId ""
 
+    Show-Message "Verifying installation..." $StyleAction
+    if (![System.IO.File]::Exists($installPath)) { Throw "Missing BinMod Executable '$exeName'." }
     Show-Message "Installation path: $installPath" $StyleCommand
     Show-Message "Installation completed" $StyleStatus
 
@@ -349,6 +365,7 @@ function Invoke-Action {
 
     $ahkPath = Install-AutoHotkey
     $ahk2exePath = Install-Ahk2Exe
+
     [void](Install-BinMod -Ahk2ExePath $ahk2exePath)
 
     if ("$env:Compression" -eq "upx") {
