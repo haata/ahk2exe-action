@@ -99,6 +99,57 @@ function Get-GitHubReleaseAssets {
     return $downloadFolder
 }
 
+function Get-GitHubReleaseFile {
+    param(
+        [string]$Repository,
+        [string]$ReleaseTag,
+        [string]$InFile,
+        [string]$OutFile
+    )
+
+    $repositoryOwner, $repositoryName = ($Repository -split "/")[0, 1]
+    if ([string]::IsNullOrEmpty($repositoryOwner)) { Throw "Invalid repository path, missing repository owner."}
+    if ([string]::IsNullOrEmpty($repositoryName)) { Throw "Invalid repository path, missing repository name."}
+
+    $headers = @{ "User-Agent" = "PowerShell-ahk2exe-action" }
+    if (![string]::IsNullOrEmpty($env:GitHubToken)) { $headers["Authorization"] = "token $env:GitHubToken" }
+
+    if ($ReleaseTag -like 'latest') {
+        # Need to determine what 'latest' is
+        $releaseApiUrl = "https://api.github.com/repos/$repositoryOwner/$repositoryName/releases/latest"
+        try {
+            Show-Message "Retrieving latest tag for $repositoryOwner/$repositoryName $releaseApiUrl"
+            $latestRelease = Invoke-RestMethod -Method Get -Uri $releaseApiUrl -Headers $headers
+            $ReleaseTag = $latestRelease.tag_name
+            Show-Message "latest tag for $repositoryOwner/$repositoryName is $ReleaseTag"
+        } catch
+        {
+            Show-Message "Error retrieving latest release: $($_.Exception.Message)"
+        }
+    }
+
+    $Url = " https://raw.githubusercontent.com/$repositoryOwner/$repositoryName/refs/tags/$ReleaseTag/$InFile"
+    Show-Message "Downloading $Url -> $OutFile"
+
+    try {
+        if (-not ([string]::IsNullOrWhiteSpace($OutFile))) {
+            # Save content to a file
+            Invoke-WebRequest -Uri $Url -OutFile $OutFile -ErrorAction Stop -Headers $headers
+            Show-Message "Content successfully downloaded to: $OutFile"
+        } else {
+            # Output error content
+            $response = Invoke-WebRequest -Uri $Url -ErrorAction Stop -Headers $headers
+            Show-Message "Content of the URL:"
+            $response.Content
+        }
+    }
+    catch {
+        Show-Message "An error occurred while retrieving the file content ($url -> $OutFile): $($_.Exception.Message)"
+    }
+
+    return $OutFile
+}
+
 function Invoke-UnzipAllInPlace {
     param (
         [string]$FolderPath
@@ -172,6 +223,31 @@ function Install-Ahk2Exe {
     Show-Message "Verifying installation..." $StyleAction
     $installPath = (Get-ChildItem -Path $downloadFolder -Recurse -Filter $exeName | Select-Object -First 1)
     if (![System.IO.File]::Exists($installPath)) { Throw "Missing Ahk2Exe Executable '$exeName'." }
+    Show-Message "Installation path: $installPath" $StyleCommand
+    Show-Message "Installation completed" $StyleStatus
+
+    [void](Set-MessageHeader $previousHeader)
+    return $installPath
+}
+
+function Install-BinMod {
+    param (
+        [string]$Ahk2ExePath
+    )
+    $previousHeader = Set-MessageHeader "Install-BinMod"
+
+    Show-Message "Installing..." $StyleAction
+    # Determine exe destination
+    $exeName = 'BinMod.exe'
+    $ahk2exeFolder = Split-Path -Path $Ahk2ExePath -Parent
+    $installPath = Join-Path $ahk2exeFolder $exeName
+
+    # Download file
+    $downloadFile = Get-GitHubReleaseFile -Repository "$env:Ahk2ExeRepo" -ReleaseTag "$env:Ahk2ExeTag" -InFile "BinMod.ahk" -OutFile "$Ahk2ExeFolder\BinMod.ahk"
+
+    # Build BinMod.exe
+    Invoke-Ahk2Exe -Path "$ahk2exePath" -Base "$ahk2exePath" -In "$downloadFile" -Out "$installPath" -Icon "" -Compression "none" -ResourceId ""
+
     Show-Message "Installation path: $installPath" $StyleCommand
     Show-Message "Installation completed" $StyleStatus
 
@@ -273,6 +349,7 @@ function Invoke-Action {
 
     $ahkPath = Install-AutoHotkey
     $ahk2exePath = Install-Ahk2Exe
+    [void](Install-BinMod -Ahk2ExePath $ahk2exePath)
 
     if ("$env:Compression" -eq "upx") {
         [void](Install-UPX -Ahk2ExePath $ahk2exePath)
